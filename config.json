@@ -5,9 +5,8 @@
         "Кстати, могу Вам помочь с превью на Вашем канале. Так мы поднимем просмотры и CTR, а также улучшим визуальную часть канала",
         "Что думаете?"
     ],
-    "vk_limit": 40,
-    "telegram_limit": 40,
-    "instagram_limit": 40,
-    "theme": "dark",
-    "photo_path": ""
+    "vk_limit": 1,
+    "telegram_limit": 0,
+    "instagram_limit": 1,
+    "photo_path": "CAESAR_DESIGN.jpg"
 }
