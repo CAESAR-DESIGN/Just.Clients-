@@ -5,23 +5,29 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 import vk_api
+from vk_api.exceptions import ApiError
 from PyQt5.QtWidgets import QMessageBox
 from browser_handler import scroll_for_limited_time
 from vk_api_handler import load_token, get_user_id
 from youtube_data import get_youtube_data
-from utils import read_sent_links, write_links_to_db, extract_user_screen_name, extract_topic_from_title
+from utils import read_sent_links, write_links_to_db, extract_user_screen_name, extract_topic_from_title, remove_emojis
 import sqlite3
 import traceback
-
+import json
 
 class MessageHandler:
     def __init__(self, browser, db_path="sent_links.db"):
+        with open('config.json', 'r') as config_file:
+            config = json.load(config_file)
         self.browser = browser
+        self.vk_message_count = 0
+        self.telegram_message_count = 0
+        self.instagram_message_count = 0
         self.message_count = 0
         self.db_path = db_path
-        self.vk_count_limit = 40
-        self.telegram_count_limit = 40
-        self.instagram_count_limit = 40
+        self.vk_count_limit = config.get('vk_limit')
+        self.telegram_count_limit = config.get('telegram_limit')
+        self.instagram_count_limit = config.get('instagram_limit')
         self.stop_sending = False
         self.is_paused = False
 
@@ -141,6 +147,8 @@ class MessageHandler:
                 telegram_counter = 0
                 instagram_counter = 0
 
+                messages_sent = False
+
                 # Проходим по всем социальным ссылкам
                 for link in all_links:
                     if self.stop_sending:
@@ -154,19 +162,22 @@ class MessageHandler:
                         continue
 
                     # Отправляем сообщения в VK
-                    if vk_links and link in vk_links and vk_counter < self.vk_count_limit:
+                    if vk_counter <= self.vk_count_limit:
                         self.send_vk_messages(vk, [link], second_message, video_thumbnail, third_message, fourth_message)
                         vk_counter += 1
+                        messages_sent = True
 
                     # Отправляем сообщения в Telegram
-                    if telegram_links and link in telegram_links and telegram_counter < self.telegram_count_limit:
+                    if telegram_counter <= self.telegram_count_limit:
                         self.send_telegram_messages([link], second_message, third_message, fourth_message, thumbnail_message)
                         telegram_counter += 1
+                        messages_sent = True
 
                     # Отправляем сообщения в Instagram
-                    if instagram_links and link in instagram_links and instagram_counter < self.instagram_count_limit:
+                    if instagram_counter <= self.instagram_count_limit:
                         self.send_instagram_messages([link], second_message, third_message, fourth_message)
                         instagram_counter += 1
+                        messages_sent = True
 
                     # Проверяем, нужно ли остановить выполнение
                     if vk_counter >= self.vk_count_limit and telegram_counter >= self.telegram_count_limit and instagram_counter >= self.instagram_count_limit:
@@ -176,9 +187,12 @@ class MessageHandler:
                     self.add_link_to_db(link)
                     sent_links.update([link])
 
-                print(f'Обработка {channel_url} завершена.')
+                if not messages_sent:
+                    print(f'Не найдено социальных ссылок на канале: {channel_url}')
+                else:
+                    print(f'Завершена рассылка на канал: {channel_url}.')
             else:
-                print(f'Не найдено социальных ссылок для канала: {channel_url}')
+                print(f'Не найдено социальных ссылок на канале: {channel_url}')
         except Exception as e:
             print(f'Ошибка при обработке канала {channel_url}: {str(e)}')
             print(traceback.format_exc())
@@ -204,12 +218,19 @@ class MessageHandler:
             user_name = user_name.lower().capitalize()
 
             upload = vk_api.VkUpload(vk)
-            photo_path = "Почему_CAESAR_DESIGN.jpg"
+            with open('config.json', 'r') as config_file:
+                config = json.load(config_file)
+            photo_path = config.get('photo_path')
             photo = upload.photo_messages(photo_path)[0]
 
             welcome_message_vk = f'Приветствую, {user_name}' if user_name else 'Приветствую'
 
             try:
+                if user_id > 0:
+                    vk.friends.add(user_id=user_id)
+                else:
+                    vk.groups.join(group_id=abs(user_id))
+
                 vk.messages.send(user_id=user_id, message=welcome_message_vk, random_id=0)
                 vk.messages.send(user_id=user_id, message=second_message, random_id=0)
                 if video_thumbnail:
@@ -217,13 +238,18 @@ class MessageHandler:
                 vk.messages.send(user_id=user_id, message=third_message, random_id=0)
                 vk.messages.send(user_id=user_id, attachment=f'photo{photo["owner_id"]}_{photo["id"]}', random_id=0)
                 vk.messages.send(user_id=user_id, message=fourth_message, random_id=0)
-
-                if user_id > 0:
-                    vk.friends.add(user_id=user_id)
-                else:
-                    vk.groups.join(group_id=abs(user_id))
-
-                print(f'Отправлено: {vk_link} ({self.message_count})')
+                self.vk_message_count += 1
+                self.message_count += 1
+                print(f'Отправлено: {vk_link} ({self.vk_message_count})')
+            except ApiError as e:
+                if "group_id not domain" in str(e):
+                    print(f'Не отправлено (такой группы не существует): {vk_link}')
+                elif "user_id not domain" in str(e):
+                    print(f'Не отправлено (такого пользователя не существует): {vk_link}')
+                elif "are not allowed to send messages" in str(e):
+                    print(f'Не отправлено (закрыт директ): {vk_link}')
+                elif "privacy settings" in str(e):
+                    print(f'Не отправлено (закрыт директ): {vk_link}')
             except Exception as e:
                 print(traceback.format_exc())
                 continue
@@ -246,12 +272,14 @@ class MessageHandler:
                     wait = WebDriverWait(self.browser, 10)
                     user_name_telegram_element = wait.until(
                         EC.presence_of_element_located((By.XPATH, '//span[@dir="auto"]')))
-                    user_name_telegram = user_name_telegram_element.text
+                    user_name_telegram = remove_emojis(user_name_telegram_element.text)
                     user_name_telegram = user_name_telegram.lower().capitalize()
 
                     tgme_page_extra = self.browser.find_elements(By.CSS_SELECTOR, 'div.tgme_page_extra')
                     if tgme_page_extra and "subscribers" in tgme_page_extra[0].text:
                         print(f'Не отправлено (канал): {telegram_link}')
+                    elif tgme_page_extra and "members" in tgme_page_extra[0].text:
+                        print(f'Не отправлено (группа): {telegram_link}')
                     else:
                         open_in_web_button = wait.until(EC.presence_of_element_located(
                             (By.CSS_SELECTOR, 'a.tgme_action_button_new.tgme_action_web_button')))
@@ -296,7 +324,9 @@ class MessageHandler:
                         self.browser.switch_to.active_element.send_keys(Keys.ENTER)
                         time.sleep(2)
 
-                        print(f'Отправлено: {telegram_link} ({self.message_count})')
+                        self.telegram_message_count += 1
+                        self.message_count += 1
+                        print(f'Отправлено: {telegram_link} ({self.telegram_message_count})')
             except Exception as e:
                 print(f'Не отправлено: {telegram_link}. Ошибка: {str(e)}')
                 print(traceback.format_exc())
@@ -317,19 +347,24 @@ class MessageHandler:
 
                 time.sleep(0.5)
                 subscribe_button = WebDriverWait(self.browser, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button._acan._acap._acas._aj1-._ap30')))
-                subscribe_button.click()
+                if subscribe_button:
+                    subscribe_button.click()
 
-                send_message_button = WebDriverWait(self.browser, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'div.x1i10hfl.xjqpnuy.xa49m3k.xqeqjp1.x2hbi6w.x972fbf.xcfux6l.x1qhh985.xm0m39n.xdl72j9.x2lah0s.xe8uvvx.xdj266r.x11i5rnm.xat24cr.x1mh8g0r.x2lwn1j.xeuugli.xexx8yu.x18d9i69.x1hl2dhg.xggy1nq.x1ja2u2z.x1t137rt.x1q0g3np.x1lku1pv.x1a2a7pz.x6s0dn4.xjyslct.x1lq5wgf.xgqcy7u.x30kzoy.x9jhf4c.x1ejq31n.xd10rxx.x1sy0etr.x17r0tee.x9f619.x1ypdohk.x78zum5.x1f6kntn.xwhw2v2.x10w6t97.xl56j7k.x17ydfre.x1swvt13.x1pi30zi.x1n2onr6.x2b8uid.xlyipyv.x87ps6o.x14atkfc.xcdnw81.x1i0vuye.x1gjpkn9.x5n08af.xsz8vos[role="button"][tabindex="0"]')))
-                send_message_button.click()
+                send_message_button = WebDriverWait(self.browser, 3).until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'div.x1i10hfl.xjqpnuy.xa49m3k.xqeqjp1.x2hbi6w.x972fbf.xcfux6l.x1qhh985.xm0m39n.xdl72j9.x2lah0s.xe8uvvx.xdj266r.x11i5rnm.xat24cr.x1mh8g0r.x2lwn1j.xeuugli.xexx8yu.x18d9i69.x1hl2dhg.xggy1nq.x1ja2u2z.x1t137rt.x1q0g3np.x1lku1pv.x1a2a7pz.x6s0dn4.xjyslct.x1lq5wgf.xgqcy7u.x30kzoy.x9jhf4c.x1ejq31n.xd10rxx.x1sy0etr.x17r0tee.x9f619.x1ypdohk.x78zum5.x1f6kntn.xwhw2v2.x10w6t97.xl56j7k.x17ydfre.x1swvt13.x1pi30zi.x1n2onr6.x2b8uid.xlyipyv.x87ps6o.x14atkfc.xcdnw81.x1i0vuye.x1gjpkn9.x5n08af.xsz8vos[role="button"][tabindex="0"]')))
+                if send_message_button:
+                    send_message_button.click()
 
-                WebDriverWait(self.browser, 10).until(EC.url_contains("/direct/"))
-                WebDriverWait(self.browser, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div.x9f619 > div.x9f619 > span.x1lliihq')))
-                time.sleep(1)
-                self.browser.switch_to.active_element.send_keys('Приветствую.' + ' ' + second_message + ' ' + third_message + '.' + ' ' + fourth_message)
-                self.browser.switch_to.active_element.send_keys(Keys.ENTER)
-                time.sleep(2)
-                self.message_count += 1
-                print(f'Отправлено: {instagram_link} ({self.message_count})')
+                    WebDriverWait(self.browser, 10).until(EC.url_contains("/direct/"))
+                    WebDriverWait(self.browser, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div.x9f619 > div.x9f619 > span.x1lliihq')))
+                    time.sleep(1)
+                    self.browser.switch_to.active_element.send_keys('Приветствую.' + ' ' + second_message + ' ' + third_message + '.' + ' ' + fourth_message)
+                    self.browser.switch_to.active_element.send_keys(Keys.ENTER)
+                    time.sleep(2)
+                    self.instagram_message_count += 1
+                    self.message_count += 1
+                    print(f'Отправлено: {instagram_link} ({self.instagram_message_count})')
+                else:
+                    print(f'Не отправлено (закрытый аккаунт): {instagram_link}')
             except Exception as e:
                 print(traceback.format_exc())
                 print(f'Не отправлено: {instagram_link}. Ошибка: {str(e)}')

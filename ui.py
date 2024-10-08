@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from settings_ui import SettingsWindow
+from messaging import MessageHandler
 
 class WorkerThread(QThread):
     finished = pyqtSignal()
@@ -48,6 +49,7 @@ class VKMessengerApp(QWidget):
         self.message_handler = message_handler
         self.init_ui()
         self.worker_thread = None
+        self.messaging = MessageHandler(browser)
 
     def init_ui(self):
         self.setStyleSheet("background-color: #0f0f0f;")
@@ -82,6 +84,7 @@ class VKMessengerApp(QWidget):
         self.send_button.setStyleSheet("background-color: #da3f21; color: #ffffff; font-size: 35px; border-radius: 25px; height: 50px;")
         self.send_button.clicked.connect(self.start_sending)
         buttons_layout.addWidget(self.send_button)
+        self.send_button.setShortcut(Qt.Key_Return)
 
         self.stop_button = QPushButton('Стоп')
         self.stop_button.setStyleSheet("background-color: #da3f21; color: #ffffff; font-size: 35px; border-radius: 25px; height: 50px;")
@@ -138,7 +141,7 @@ class VKMessengerApp(QWidget):
             self.pause_button.setText('Пуск')
 
     def sending_finished(self):
-        QMessageBox.information(self, 'Информация', 'Рассылка завершена.')
+        QMessageBox.information(self, 'Информация', f'Рассылка завершена. Отправлено сообщений: {self.messaging.message_count}')
         self.send_button.setVisible(True)
         self.stop_button.setVisible(False)
         self.pause_button.setVisible(False)

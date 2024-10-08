@@ -1,8 +1,9 @@
 import sqlite3
 from openai import OpenAI
+import re
 
 def extract_topic_from_title(video_title):
-    api_key = "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"
+    api_key = "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"
     client = OpenAI(api_key=api_key)
 
     video_title_quotes = f"'{video_title}'"
@@ -17,6 +18,18 @@ def extract_topic_from_title(video_title):
 
     topic = completion.choices[0].message.content
     return topic
+
+def remove_emojis(text):
+    emoji_pattern = re.compile(
+        "[\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U00002702-\U000027B0"  # dingbats
+        "\U000024C2-\U0001F251"  # enclosed characters
+        "]+", flags=re.UNICODE
+    )
+    return emoji_pattern.sub(r'', text)
 
 def init_db():
     conn = sqlite3.connect('sent_links.db')

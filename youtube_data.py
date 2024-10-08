@@ -15,8 +15,8 @@ def get_youtube_data(browser, channel_url):
         social_links_decoded = [link for link in social_links_decoded if link]
 
         if social_links_decoded:
-            vk_links = [link for link in social_links_decoded if 'vk.com' in link or 'vk.ru' in link]
-            telegram_links = [link for link in social_links_decoded if 't.me' in link or 'telegram.me' in link]
+            vk_links = [link for link in social_links_decoded if ('vk.com' in link or 'vk.ru' in link) and '/video/' not in link]
+            telegram_links = [link for link in social_links_decoded if ('t.me' in link or 'telegram.me' in link) and 'bot' not in link.lower()]
             instagram_links = [link for link in social_links_decoded if 'instagram.com' in link]
 
             video_thumbnail_link = channel_url.replace('/about', '/videos')
