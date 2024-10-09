@@ -3,7 +3,7 @@ from openai import OpenAI
 import re
 
 def extract_topic_from_title(video_title):
-    api_key = "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"
+    api_key = ""
     client = OpenAI(api_key=api_key)
 
     video_title_quotes = f"'{video_title}'"
